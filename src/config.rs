@@ -21,6 +21,9 @@ pub struct Config {
     pub rate_max_requests: u32,
     /// 레이트 리밋: 윈도우 길이.
     pub rate_window: Duration,
+    /// 업데이트 매니페스트(version.json) 주소. 비어 있으면 업데이트 기능 전체가 꺼진다.
+    /// 유저에게 배포하는 빌드에서는 반드시 채워야 강제 업데이트가 동작한다.
+    pub update_manifest_url: Option<String>,
 }
 
 impl Config {
@@ -49,6 +52,8 @@ impl Config {
             trust_proxy: env_or("TRUST_PROXY", "false").eq_ignore_ascii_case("true"),
             rate_max_requests: env_parse("RATE_MAX_REQUESTS", 20),
             rate_window: Duration::from_secs(env_parse("RATE_WINDOW_SECS", 60)),
+            // 개발 중에는 비워 두면 된다. 값이 없으면 업데이트 확인 자체를 하지 않는다.
+            update_manifest_url: env_opt("UPDATE_MANIFEST_URL"),
         })
     }
 }
@@ -59,6 +64,14 @@ fn env_or(key: &str, default: &str) -> String {
         Ok(v) if !v.trim().is_empty() => v.trim().to_string(),
         _ => default.to_string(),
     }
+}
+
+/// 있으면 값, 없거나 비어 있으면 None. "설정하지 않음"과 "빈 문자열"을 같게 취급한다.
+fn env_opt(key: &str) -> Option<String> {
+    std::env::var(key)
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
 }
 
 /// 환경변수를 파싱하되, 없거나 형식이 틀리면 기본값을 쓴다.

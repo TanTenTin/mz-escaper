@@ -16,6 +16,16 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "str
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+# 자체 업데이트용.
+# semver: "0.2.0" 같은 버전 문자열을 숫자로 비교한다. 문자열 비교로는 0.10 < 0.9 가 되어버린다.
+semver = "1"
+# sha2: 내려받은 바이너리가 매니페스트에 적힌 해시와 같은지 확인한다. HTTPS만으로는
+# 릴리스 저장소가 오염된 경우를 못 잡는다.
+sha2 = "0.10"
+# self-replace: 실행 중인 exe는 덮어쓸 수 없다(Windows는 파일 잠금). 이 크레이트가
+# 현재 exe를 임시 이름으로 밀어내고 새 파일을 제자리에 놓는 OS별 절차를 처리한다.
+self-replace = "1"
+
 # .env 파일 로딩. 운영에서는 실제 환경변수를 쓰면 되고, 없으면 조용히 넘어간다.
 dotenvy = "0.15"
 

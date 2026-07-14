@@ -112,6 +112,25 @@
     background: var(--accent); color: #fff; font-weight: 600; font-size: 14px;
   }
   #send:disabled { opacity: .5; cursor: default; }
+
+  /* ── 업데이트 배너 ──
+     새 버전이 있을 때만 나타난다. 강제 업데이트는 서버가 켜질 때 알아서 끝내므로
+     여기 오지 않는다. 즉 이 배너는 항상 "미뤄도 되는" 업데이트다. */
+  #update-bar {
+    display: none; align-items: center; gap: 10px;
+    padding: 10px 18px; border-bottom: 1px solid var(--border);
+    background: #1e293b; font-size: 13px;
+  }
+  #update-bar.show { display: flex; }
+  #update-text { flex: 1; }
+  #update-text strong { color: var(--accent); }
+  #update-notes { color: var(--muted); }
+  #update-bar button {
+    padding: 6px 12px; border-radius: 8px; cursor: pointer;
+    border: 1px solid var(--border); background: transparent; color: var(--text); font: inherit;
+  }
+  #update-now { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  #update-bar button:disabled { opacity: .5; cursor: default; }
 </style>
 </head>
 <body>
@@ -120,6 +139,12 @@
     <h1>MZ 탈출기</h1>
     <button id="reset" type="button">대화 초기화</button>
   </header>
+
+  <aside id="update-bar">
+    <div id="update-text"></div>
+    <button id="update-now" type="button">지금 업데이트</button>
+    <button id="update-later" type="button">나중에</button>
+  </aside>
 
   <section id="tone-bar">
     <div class="label">말투</div>
@@ -337,7 +362,78 @@ $reset.onclick = () => {
   $input.focus();
 };
 
+// ─────────────────────────────────────────────────────────────
+// 업데이트
+//
+// 서버는 켜질 때 한 번만 버전을 확인한다. 여기서는 그 결과를 받아 배너를 띄울 뿐이다.
+// 최소버전 미만이었다면 서버가 시작 단계에서 스스로 교체·재시작하므로, 이 화면이
+// 보이는 시점에 남아 있는 업데이트는 전부 "선택"이다.
+// ─────────────────────────────────────────────────────────────
+const $updateBar = document.getElementById('update-bar');
+const $updateText = document.getElementById('update-text');
+const $updateNow = document.getElementById('update-now');
+const $updateLater = document.getElementById('update-later');
+
+async function checkUpdate() {
+  try {
+    const res = await fetch('/api/update');
+    const data = await res.json();
+    if (!data.updateAvailable) return;
+
+    const notes = data.notes ? ` — <span id="update-notes">${escapeHtml(data.notes)}</span>` : '';
+    $updateText.innerHTML =
+      `새 버전 <strong>v${escapeHtml(data.latest)}</strong> 이 있습니다 (현재 v${escapeHtml(data.current)})${notes}`;
+    $updateBar.classList.add('show');
+  } catch {
+    // 업데이트 확인 실패는 대화에 아무 영향이 없다. 조용히 넘어간다.
+  }
+}
+
+$updateNow.onclick = async () => {
+  $updateNow.disabled = true;
+  $updateLater.disabled = true;
+  $updateText.textContent = '내려받는 중입니다. 창을 닫지 마세요...';
+
+  try {
+    const res = await fetch('/api/update/apply', { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '업데이트 실패');
+
+    // 서버가 새 바이너리로 재시작한다. 다시 살아날 때까지 기다렸다가 새로고침한다.
+    $updateText.textContent = '재시작하는 중입니다...';
+    await waitForRestart();
+    location.reload();
+  } catch (e) {
+    $updateText.textContent = e.message + ' 나중에 다시 시도해주세요.';
+    $updateLater.disabled = false;
+  }
+};
+
+$updateLater.onclick = () => $updateBar.classList.remove('show');
+
+/// /healthz 가 다시 응답할 때까지 폴링한다. 재시작에는 보통 1초도 안 걸린다.
+async function waitForRestart() {
+  for (let i = 0; i < 40; i++) {
+    await new Promise((r) => setTimeout(r, 500));
+    try {
+      const res = await fetch('/healthz', { cache: 'no-store' });
+      if (res.ok) return;
+    } catch {
+      // 아직 안 떴다. 계속 기다린다.
+    }
+  }
+  throw new Error('재시작을 확인하지 못했습니다.');
+}
+
+/// 매니페스트의 notes 는 내가 쓰는 값이지만, HTML 로 그대로 넣는 습관은 들이지 않는다.
+function escapeHtml(s) {
+  const el = document.createElement('div');
+  el.textContent = String(s);
+  return el.innerHTML;
+}
+
 loadPresets();
+checkUpdate();
 </script>
 </body>
 </html>
