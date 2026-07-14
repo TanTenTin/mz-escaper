@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "enabledPlugins": {
+    "rust-analyzer-lsp@claude-plugins-official": true
+  },
+  "permissions": {
+    "deny": [
+      "Read(./.env)",
+      "Edit(./.env)",
+      "Read(./target/**)"
+    ],
+    "allow": [
+      "Bash(cargo check:*)",
+      "Bash(cargo build:*)",
+      "Bash(cargo clippy:*)",
+      "Bash(cargo fmt:*)",
+      "Bash(cargo test:*)",
+      "Bash(cargo tree:*)",
+      "PowerShell(cargo check:*)",
+      "PowerShell(cargo build:*)",
+      "PowerShell(cargo clippy:*)",
+      "PowerShell(cargo fmt:*)",
+      "PowerShell(cargo test:*)",
+      "PowerShell(cargo tree:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git branch:*)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "powershell",
+            "command": "$p = [Console]::In.ReadToEnd() | ConvertFrom-Json; $f = $p.tool_input.file_path; if ($f -like \"*.rs\") { & \"$env:USERPROFILE\\.cargo\\bin\\rustfmt.exe\" --edition 2021 -- \"$f\" }",
+            "statusMessage": "rustfmt 적용 중",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}
