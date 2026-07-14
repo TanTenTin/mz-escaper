@@ -1,9 +1,13 @@
-//! /api/chat 핸들러: 검증 → system 프롬프트 조립 → 게이트웨이 SSE 릴레이.
+//! /api/chat 핸들러: 검증 → 업스트림 호출 → SSE 릴레이.
 //!
-//! 성능상 핵심은 마지막 단계다. 업스트림이 보내오는 SSE를 서버에서 파싱하거나
-//! 모아 두지 않고, 바이트 청크가 도착하는 즉시 그대로 브라우저로 흘려보낸다.
-//! 덕분에 응답 길이와 무관하게 서버의 메모리 사용량이 일정하고, 첫 글자가 화면에
-//! 뜨기까지의 지연이 게이트웨이 응답 속도에 그대로 수렴한다.
+//! 업스트림이 어디인지는 모드에 따라 다르다 (config.rs 참고).
+//!
+//!   백엔드 모드 — 키를 쥐고 LLM 게이트웨이를 직접 부른다. system 프롬프트도 여기서 만든다.
+//!   릴레이 모드 — 유저 PC의 exe. 키가 없으므로 검증만 하고 내 백엔드의 /api/chat 으로 넘긴다.
+//!
+//! 어느 쪽이든 마지막 단계는 같다. 업스트림이 보내오는 SSE를 파싱하거나 모아 두지 않고,
+//! 바이트 청크가 도착하는 즉시 그대로 브라우저로 흘려보낸다. 덕분에 응답 길이와 무관하게
+//! 메모리 사용량이 일정하고, 릴레이를 한 단 더 거쳐도 첫 글자까지의 지연이 거의 늘지 않는다.
 
 use axum::{
     body::Body,
@@ -63,45 +67,70 @@ pub async fn handle_chat(
         );
     }
 
-    // 2) 말투 → system 프롬프트.
+    // 2) 말투 검증. 릴레이 모드에서도 여기서 한 번 거른다. 잘못된 말투 id를 백엔드까지
+    //    보내 봐야 어차피 거부당하고, 왕복만 한 번 낭비된다.
     let system_prompt = match tone::build_system_prompt(&req.tone, req.custom_tone.as_deref()) {
         Ok(p) => p,
         Err(msg) => return error_response(StatusCode::BAD_REQUEST, &msg),
     };
 
-    // 3) 히스토리 검증.
+    // 3) 히스토리 검증. 릴레이 모드에서도 길이 상한을 여기서 적용한다. 유저 PC의 exe가
+    //    1차 관문이 되므로, 백엔드에 닿는 요청의 크기가 미리 걸러진다.
+    //    (물론 백엔드도 같은 검증을 다시 한다 — exe는 유저 손에 있어 신뢰할 수 없다.)
     let history = match sanitize_history(req.messages) {
         Ok(h) => h,
         Err(msg) => return error_response(StatusCode::BAD_REQUEST, &msg),
     };
 
-    // 4) 업스트림에 보낼 메시지 배열: system 하나 + 검증된 히스토리.
-    let mut messages = Vec::with_capacity(history.len() + 1);
-    messages.push(json!({ "role": "system", "content": system_prompt }));
-    for m in history {
-        messages.push(json!({ "role": m.role, "content": m.content }));
-    }
+    // 4) 모드에 따라 업스트림이 갈린다.
+    let upstream = if let Some(api_key) = &state.cfg.api_key {
+        // ── 백엔드 모드 ──
+        // 메시지 배열: system 하나 + 검증된 히스토리. system 프롬프트는 키를 쥔 이 서버만
+        // 만든다. 클라이언트가 보낸 system 역할은 sanitize_history 가 이미 거부했다.
+        let mut messages = Vec::with_capacity(history.len() + 1);
+        messages.push(json!({ "role": "system", "content": system_prompt }));
+        for m in history {
+            messages.push(json!({ "role": m.role, "content": m.content }));
+        }
 
-    let upstream_body = json!({
-        "model": state.cfg.model,
-        "messages": messages,
-        "stream": true,
-        // 말투를 살리려면 약간의 자유도가 필요하다. 너무 낮으면 문체가 밋밋해진다.
-        "temperature": 0.8,
-        "max_tokens": MAX_OUTPUT_TOKENS,
-    });
+        let body = json!({
+            "model": state.cfg.model,
+            "messages": messages,
+            "stream": true,
+            // 말투를 살리려면 약간의 자유도가 필요하다. 너무 낮으면 문체가 밋밋해진다.
+            "temperature": 0.8,
+            "max_tokens": MAX_OUTPUT_TOKENS,
+        });
 
-    // 5) 게이트웨이 호출. API 키는 이 헤더에만 쓰이고, 응답 어디에도 실리지 않는다.
-    let url = format!("{}/chat/completions", state.cfg.base_url);
-    let upstream = state
-        .http
-        .post(&url)
-        .bearer_auth(&state.cfg.api_key)
-        .json(&upstream_body)
-        .send()
-        .await;
+        // API 키는 이 헤더에만 쓰이고, 응답 어디에도 실리지 않는다.
+        let url = format!("{}/chat/completions", state.cfg.base_url);
+        state
+            .http
+            .post(&url)
+            .bearer_auth(api_key)
+            .json(&body)
+            .send()
+    } else {
+        // ── 릴레이 모드 ──
+        // 검증된 히스토리와 말투를 그대로 백엔드의 /api/chat 에 넘긴다. system 프롬프트를
+        // 여기서 만들어 보내지 않는 이유: 백엔드는 클라이언트가 준 system 을 거부한다.
+        // 말투 조립은 키를 쥔 쪽의 몫이다.
+        let messages: Vec<_> = history
+            .iter()
+            .map(|m| json!({ "role": m.role, "content": m.content }))
+            .collect();
 
-    let upstream = match upstream {
+        let body = json!({
+            "messages": messages,
+            "tone": req.tone,
+            "custom_tone": req.custom_tone,
+        });
+
+        let url = format!("{}/api/chat", state.cfg.backend_url);
+        state.http.post(&url).json(&body).send()
+    };
+
+    let upstream = match upstream.await {
         Ok(r) => r,
         Err(e) => {
             // 에러 원문은 서버 로그에만 남긴다. URL이나 키 관련 정보가 사용자에게
@@ -113,16 +142,25 @@ pub async fn handle_chat(
 
     if !upstream.status().is_success() {
         let status = upstream.status();
-        // 업스트림 에러 본문도 로그로만. 여기에 키 관련 힌트가 들어 있을 수 있다.
         let body = upstream.text().await.unwrap_or_default();
         eprintln!("[upstream] {status} 응답: {body}");
+
+        // 릴레이 모드의 업스트림은 내 백엔드다. 그쪽 에러 본문은 이미 사용자용으로 다듬어져
+        // 있고 키 관련 정보가 없으므로, 상태와 메시지를 그대로 넘겨준다. 그래야 "요청이
+        // 너무 잦습니다" 같은 안내가 유저에게 제대로 보인다.
+        if !state.cfg.is_backend() {
+            return relay_error(status, &body);
+        }
+
+        // 백엔드 모드의 업스트림은 게이트웨이다. 본문에 키 관련 힌트가 있을 수 있으므로
+        // 로그로만 남기고 클라이언트에는 일반적인 메시지만 준다.
         return error_response(
             StatusCode::BAD_GATEWAY,
             "AI 서버가 요청을 거부했습니다. 잠시 후 다시 시도해주세요.",
         );
     }
 
-    // 6) 릴레이. bytes_stream()은 도착한 청크를 그대로 넘겨주고,
+    // 5) 릴레이. bytes_stream()은 도착한 청크를 그대로 넘겨주고,
     //    Body::from_stream()은 그것을 복사 없이 응답 바디로 감싼다.
     //    응답 전체를 메모리에 모으는 지점이 한 군데도 없다.
     let stream = upstream.bytes_stream();
@@ -202,4 +240,18 @@ fn sanitize_history(messages: Vec<InMessage>) -> Result<Vec<CleanMessage>, Strin
 /// 에러를 JSON으로 돌려준다. 프런트는 응답이 SSE가 아니면 이 형식으로 파싱한다.
 fn error_response(status: StatusCode, message: &str) -> Response {
     (status, Json(json!({ "error": message }))).into_response()
+}
+
+/// 릴레이 모드에서 백엔드가 준 에러를 그대로 유저에게 전달한다.
+///
+/// 백엔드의 에러 본문은 이 코드가 만든 것(`error_response`)이라 형식을 안다. 다만 백엔드가
+/// 아닌 무언가(프록시, 로드밸런서)가 응답했을 수도 있으므로, `error` 필드가 없으면 일반
+/// 메시지로 바꾼다. 유저에게 HTML 에러 페이지 원문을 보여줄 이유는 없다.
+fn relay_error(status: StatusCode, body: &str) -> Response {
+    let message = serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| v.get("error")?.as_str().map(str::to_string))
+        .unwrap_or_else(|| "AI 서버가 요청을 거부했습니다. 잠시 후 다시 시도해주세요.".to_string());
+
+    error_response(status, &message)
 }

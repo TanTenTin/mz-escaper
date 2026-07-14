@@ -105,7 +105,15 @@ async fn main() {
         "mz-escaper v{} 실행 중 → http://{addr}",
         update::CURRENT_VERSION
     );
-    println!("  모델: {}", state.cfg.model);
+    // 모드를 첫 줄에 찍는다. 백엔드로 띄웠다고 생각했는데 .env 를 안 읽어 릴레이로 뜨는
+    // 사고는 조용히 일어나면 원인을 찾기 어렵다.
+    if state.cfg.is_backend() {
+        println!("  모드: 백엔드 (게이트웨이 직접 호출)");
+        println!("  모델: {}", state.cfg.model);
+    } else {
+        println!("  모드: 릴레이 (API 키 없음)");
+        println!("  백엔드: {}", state.cfg.backend_url);
+    }
     if let Some(info) = &state.update {
         if info.decision == Decision::Optional {
             println!(

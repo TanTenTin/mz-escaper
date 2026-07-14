@@ -2,6 +2,14 @@
 //!
 //! API 키를 읽는 지점은 이 파일 하나뿐이다. 여기서 읽은 값은 `Config` 안에 담겨
 //! 서버 프로세스 메모리에만 머무르며, 어떤 핸들러도 이 값을 응답 바디에 싣지 않는다.
+//!
+//! 같은 바이너리가 두 역할을 겸한다. 구분 기준은 `LLM_API_KEY` 하나다.
+//!
+//!   백엔드 모드 (키 있음) — 내가 호스팅하는 서버. 게이트웨이를 직접 부른다.
+//!   릴레이 모드 (키 없음) — 유저에게 배포된 exe. 키를 갖지 않고 내 백엔드로 넘긴다.
+//!
+//! 유저가 받는 exe 에는 `.env` 가 없으므로 자동으로 릴레이가 된다. 이 구조 덕분에
+//! 배포된 바이너리를 아무리 뜯어봐도 키가 나오지 않는다.
 
 use std::time::Duration;
 
@@ -10,12 +18,21 @@ use std::time::Duration;
 const DEFAULT_UPDATE_MANIFEST_URL: &str =
     "https://github.com/TanTenTin/mz-escaper/releases/latest/download/version.json";
 
+/// 릴레이 모드일 때 요청을 넘길 백엔드 주소.
+///
+/// TODO: 아직 실제 도메인이 없다. 배포 전에 실제 주소로 바꿔야 한다. 이 값이 틀리면
+/// 배포된 exe 는 채팅이 전부 실패한다(업데이트는 별개 주소라 계속 동작한다).
+const DEFAULT_BACKEND_URL: &str = "https://mz.tan-kim.com";
+
 #[derive(Clone)]
 pub struct Config {
     /// LLM 게이트웨이 API 키. 업스트림 요청의 Authorization 헤더에만 쓰인다.
-    pub api_key: String,
-    /// OpenAI 호환 베이스 URL (예: https://llm.tan-kim.com/v1)
+    /// None 이면 릴레이 모드다 — 이 프로세스는 키를 모른다.
+    pub api_key: Option<String>,
+    /// OpenAI 호환 베이스 URL (예: https://llm.tan-kim.com/v1). 백엔드 모드에서만 쓴다.
     pub base_url: String,
+    /// 릴레이 모드에서 요청을 넘길 내 백엔드 주소. 뒤에 /api/chat 이 붙는다.
+    pub backend_url: String,
     /// 사용할 모델 이름.
     pub model: String,
     /// 서버가 바인드할 주소.
@@ -32,24 +49,34 @@ pub struct Config {
 }
 
 impl Config {
-    /// 환경변수에서 설정을 읽는다. 필수값이 없으면 이유를 담아 Err를 돌려준다.
+    /// 환경변수에서 설정을 읽는다. 형식이 틀린 값이 있으면 이유를 담아 Err를 돌려준다.
+    ///
+    /// `LLM_API_KEY` 가 없는 것은 오류가 아니다 — 릴레이 모드라는 뜻이다.
     pub fn from_env() -> Result<Self, String> {
         // .env가 있으면 읽고, 없으면 조용히 넘어간다(운영에서는 진짜 환경변수를 쓴다).
+        // 유저에게 배포된 exe 에는 .env 가 없고, 그래서 릴레이 모드로 뜬다.
         let _ = dotenvy::dotenv();
 
-        let api_key = std::env::var("LLM_API_KEY").map_err(|_| {
-            "LLM_API_KEY 가 설정되지 않았습니다. .env.example 을 .env 로 복사해 채우세요."
-                .to_string()
-        })?;
-
-        if api_key.trim().is_empty() {
-            return Err("LLM_API_KEY 가 비어 있습니다.".to_string());
-        }
+        // 키를 넣긴 했는데 빈 값이면, 백엔드로 띄우려다 실수한 상황이다. 조용히 릴레이로
+        // 흘려보내면 원인을 찾기 어려우니 여기서 끊는다.
+        let api_key = match std::env::var("LLM_API_KEY") {
+            Ok(v) if v.trim().is_empty() => {
+                return Err(
+                    "LLM_API_KEY 가 비어 있습니다. 릴레이 모드로 띄우려면 아예 설정하지 마세요."
+                        .to_string(),
+                );
+            }
+            Ok(v) => Some(v.trim().to_string()),
+            Err(_) => None,
+        };
 
         Ok(Config {
             api_key,
             // trim_end_matches('/'): 뒤에 슬래시를 붙여 넣어도 URL이 //로 깨지지 않게 한다.
             base_url: env_or("LLM_BASE_URL", "https://llm.tan-kim.com/v1")
+                .trim_end_matches('/')
+                .to_string(),
+            backend_url: env_or("BACKEND_URL", DEFAULT_BACKEND_URL)
                 .trim_end_matches('/')
                 .to_string(),
             model: env_or("LLM_MODEL", "gemini-2.0-flash"),
@@ -70,6 +97,11 @@ impl Config {
                 Err(_) => Some(DEFAULT_UPDATE_MANIFEST_URL.to_string()),
             },
         })
+    }
+
+    /// 키를 쥐고 게이트웨이를 직접 부르는 쪽인가. 아니면 내 백엔드로 넘기는 쪽인가.
+    pub fn is_backend(&self) -> bool {
+        self.api_key.is_some()
     }
 }
 
