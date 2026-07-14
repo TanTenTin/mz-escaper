@@ -1,0 +1,101 @@
+# 태그를 밀면 바이너리를 빌드해 GitHub Releases 에 올리고, 자체 업데이트가 읽는
+# version.json 을 함께 붙인다.
+#
+# 배포 절차는 이게 전부다:
+#   1. Cargo.toml 의 version 을 올린다 (필요하면 MINIMUM_VERSION 도)
+#   2. git tag v0.2.0 && git push origin v0.2.0
+#
+# sha256 을 손으로 계산해 매니페스트에 적는 일은 언젠가 반드시 틀린다. 그래서
+# 해시와 다운로드 URL 은 여기서 기계가 만든다.
+
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+# gh release create 가 릴리스를 만들려면 쓰기 권한이 필요하다.
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # 태그 메시지를 릴리스 노트로 쓰려면 태그 객체가 필요하다. 얕은 클론에는 없다.
+          fetch-depth: 0
+
+      # 태그와 Cargo.toml 의 버전이 어긋난 채로 릴리스되면 업데이트가 무한 루프에 빠진다.
+      # (매니페스트의 latest 보다 바이너리의 CARGO_PKG_VERSION 이 낮으면, 업데이트를 마쳐도
+      #  새 바이너리가 여전히 자신을 구버전으로 판단한다.) 그래서 여기서 막는다.
+      - name: 버전 검증
+        id: meta
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}" -replace '^v', ''
+          $cargo = (Select-String -Path Cargo.toml -Pattern '^version\s*=\s*"(.+)"').Matches[0].Groups[1].Value
+          if ($tag -ne $cargo) {
+            throw "태그 v$tag 와 Cargo.toml 의 version $cargo 가 다릅니다."
+          }
+
+          $minimum = (Get-Content MINIMUM_VERSION -Raw).Trim()
+          # minimum 이 latest 보다 높으면 모든 유저가 존재하지 않는 버전으로 강제 업데이트된다.
+          if ([version]$minimum -gt [version]$cargo) {
+            throw "MINIMUM_VERSION($minimum) 이 릴리스 버전($cargo) 보다 높습니다."
+          }
+
+          "version=$cargo"  >> $env:GITHUB_OUTPUT
+          "minimum=$minimum" >> $env:GITHUB_OUTPUT
+          "asset=mz-escaper-$cargo-windows-x86_64.exe" >> $env:GITHUB_OUTPUT
+
+      - name: 빌드
+        shell: pwsh
+        run: cargo build --release
+
+      # 매니페스트의 sha256 은 유저 PC에서 바이너리를 교체하기 전 마지막 관문이다.
+      # 이 값이 실제 파일과 다르면 유저는 업데이트에 실패하고 구버전에 남는다.
+      - name: 에셋 이름 지정 및 매니페스트 작성
+        shell: pwsh
+        run: |
+          $ver     = "${{ steps.meta.outputs.version }}"
+          $minimum = "${{ steps.meta.outputs.minimum }}"
+          $asset   = "${{ steps.meta.outputs.asset }}"
+
+          Copy-Item target/release/mz-escaper.exe $asset
+          $hash = (Get-FileHash $asset -Algorithm SHA256).Hash.ToLower()
+
+          # 태그 메시지의 첫 줄을 UI 배너에 띄울 한 줄 설명으로 쓴다.
+          # 가벼운 태그(annotated 아님)면 빈 문자열이 된다.
+          $notes = (git tag -l --format='%(contents:subject)' "${{ github.ref_name }}").Trim()
+
+          $manifest = [ordered]@{
+            latest  = $ver
+            minimum = $minimum
+            notes   = $notes
+            assets  = [ordered]@{
+              'windows-x86_64' = [ordered]@{
+                url    = "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/$asset"
+                sha256 = $hash
+              }
+            }
+          }
+
+          # pwsh 의 utf8 은 BOM 을 붙이지 않는다. BOM 이 붙으면 serde 가 파싱에 실패한다.
+          $manifest | ConvertTo-Json -Depth 5 | Out-File version.json -Encoding utf8
+          Get-Content version.json
+
+      # version.json 은 /releases/latest/download/version.json 으로 항상 최신 릴리스의 것이
+      # 노출된다. 구버전 바이너리가 이 고정 주소만 알면 되는 이유다.
+      - name: 릴리스 생성
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" `
+            "${{ steps.meta.outputs.asset }}" `
+            version.json `
+            --title "${{ github.ref_name }}" `
+            --generate-notes

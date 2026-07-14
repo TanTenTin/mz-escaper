@@ -49,7 +49,7 @@ notepad .env   # LLM_API_KEY 를 채운다
 | `TRUST_PROXY` | `false` | 리버스 프록시 뒤에 있을 때만 `true` |
 | `RATE_MAX_REQUESTS` | `20` | IP당 허용 요청 수 |
 | `RATE_WINDOW_SECS` | `60` | 레이트 리밋 윈도우(초) |
-| `UPDATE_MANIFEST_URL` | (없음) | 업데이트 매니페스트 주소. 비우면 업데이트 기능이 꺼진다 |
+| `UPDATE_MANIFEST_URL` | GitHub Releases 의 `latest` | 업데이트 매니페스트 주소. 빈 값으로 두면 업데이트 확인을 끈다 |
 
 ### 3. 빌드 & 실행
 
@@ -90,16 +90,43 @@ UI(HTML/CSS/JS)는 `include_str!` 로 바이너리에 내장되어 있어 정적
 ## 배포와 업데이트
 
 유저에게 `mz-escaper.exe` 를 나눠 주는 방식이라, 새 버전을 알리고 갈아끼우는 일을
-바이너리가 스스로 한다. `UPDATE_MANIFEST_URL` 에 아래 형태의 JSON 주소를 넣어 두면 켜진다.
+바이너리가 스스로 한다. 배포는 **GitHub Releases** 로 하고, 릴리스에 함께 올라가는
+`version.json` 이 업데이트 정책을 실어 나른다.
+
+### 새 버전 내는 법
+
+```powershell
+# 1. 버전을 올린다. (강제 업데이트를 걸 거면 MINIMUM_VERSION 도 함께 올린다)
+#    Cargo.toml 의 version = "0.2.0"
+
+# 2. 태그를 민다. 나머지는 GitHub Actions 가 한다.
+git tag -a v0.2.0 -m "말투 프리셋 3종 추가"
+git push origin v0.2.0
+```
+
+`.github/workflows/release.yml` 가 태그를 받아 빌드하고, sha256 을 계산하고,
+`version.json` 을 만들어 exe와 함께 릴리스에 올린다. **해시를 손으로 적는 곳은 없다** —
+손으로 적으면 언젠가 반드시 틀리고, 틀리는 순간 모든 유저의 업데이트가 실패한다.
+
+태그 메시지의 첫 줄은 유저의 업데이트 배너에 그대로 표시된다.
+
+워크플로는 두 가지를 먼저 검증하고 실패시킨다:
+
+- **태그 ≠ `Cargo.toml` 의 version** → 중단. 이게 어긋나면 업데이트가 무한 루프에 빠진다.
+  (매니페스트의 `latest` 보다 바이너리에 박힌 버전이 낮으면, 업데이트를 끝낸 새 바이너리가
+  여전히 자신을 구버전으로 판단한다.)
+- **`MINIMUM_VERSION` > 릴리스 버전** → 중단. 존재하지 않는 버전으로 전원이 강제 업데이트된다.
+
+### version.json
 
 ```json
 {
   "latest":  "0.2.0",
-  "minimum": "0.2.0",
+  "minimum": "0.1.0",
   "notes":   "말투 프리셋 3종 추가",
   "assets": {
     "windows-x86_64": {
-      "url":    "https://example.com/mz-escaper-0.2.0-windows-x86_64.exe",
+      "url":    "https://github.com/TanTenTin/mz-escaper/releases/download/v0.2.0/mz-escaper-0.2.0-windows-x86_64.exe",
       "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
     }
   }
@@ -107,7 +134,11 @@ UI(HTML/CSS/JS)는 `include_str!` 로 바이너리에 내장되어 있어 정적
 ```
 
 `assets` 의 키는 `{OS}-{ARCH}` 다 (`windows-x86_64`, `linux-x86_64`, `macos-aarch64` …).
-`sha256` 은 PowerShell 기준 `Get-FileHash <exe> -Algorithm SHA256` 로 뽑는다.
+지금 워크플로는 Windows 만 빌드한다.
+
+바이너리가 조회하는 주소는 `…/releases/latest/download/version.json` 하나로 고정이다.
+이 주소는 항상 최신 릴리스의 파일을 가리키므로, 아무리 오래된 바이너리도 최신을 찾아간다.
+이 값은 `src/config.rs` 에 기본값으로 박혀 있다 — 배포된 exe 에는 `.env` 가 없기 때문이다.
 
 ### 두 개의 버전이 정책을 만든다
 

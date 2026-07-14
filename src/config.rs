@@ -5,6 +5,11 @@
 
 use std::time::Duration;
 
+/// 업데이트 매니페스트의 기본 주소. GitHub Releases 의 "latest" 는 릴리스를 새로 내도
+/// 주소가 바뀌지 않으므로, 아무리 오래된 바이너리도 이 URL 하나로 최신을 찾아간다.
+const DEFAULT_UPDATE_MANIFEST_URL: &str =
+    "https://github.com/TanTenTin/mz-escaper/releases/latest/download/version.json";
+
 #[derive(Clone)]
 pub struct Config {
     /// LLM 게이트웨이 API 키. 업스트림 요청의 Authorization 헤더에만 쓰인다.
@@ -52,8 +57,18 @@ impl Config {
             trust_proxy: env_or("TRUST_PROXY", "false").eq_ignore_ascii_case("true"),
             rate_max_requests: env_parse("RATE_MAX_REQUESTS", 20),
             rate_window: Duration::from_secs(env_parse("RATE_WINDOW_SECS", 60)),
-            // 개발 중에는 비워 두면 된다. 값이 없으면 업데이트 확인 자체를 하지 않는다.
-            update_manifest_url: env_opt("UPDATE_MANIFEST_URL"),
+            // 기본값을 코드에 박아 두는 이유: 유저에게는 exe 하나만 건네므로 .env 가 없다.
+            // 환경변수에서만 읽으면 배포된 바이너리는 업데이트가 꺼진 채로 돌게 된다.
+            // `UPDATE_MANIFEST_URL=` (빈 값)로 두면 개발 중에 확인을 끌 수 있다.
+            //
+            // /releases/latest/download/ 는 "최신 릴리스"를 따라가는 고정 주소다. 릴리스를
+            // 새로 내도 이 URL 은 바뀌지 않으므로 구버전 바이너리도 늘 최신을 찾아간다.
+            update_manifest_url: match std::env::var("UPDATE_MANIFEST_URL") {
+                // 명시적으로 빈 값을 넣었으면 "끈다"는 뜻이다.
+                Ok(v) if v.trim().is_empty() => None,
+                Ok(v) => Some(v.trim().to_string()),
+                Err(_) => Some(DEFAULT_UPDATE_MANIFEST_URL.to_string()),
+            },
         })
     }
 }
@@ -64,14 +79,6 @@ fn env_or(key: &str, default: &str) -> String {
         Ok(v) if !v.trim().is_empty() => v.trim().to_string(),
         _ => default.to_string(),
     }
-}
-
-/// 있으면 값, 없거나 비어 있으면 None. "설정하지 않음"과 "빈 문자열"을 같게 취급한다.
-fn env_opt(key: &str) -> Option<String> {
-    std::env::var(key)
-        .ok()
-        .map(|v| v.trim().to_string())
-        .filter(|v| !v.is_empty())
 }
 
 /// 환경변수를 파싱하되, 없거나 형식이 틀리면 기본값을 쓴다.
