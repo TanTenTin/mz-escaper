@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MZ 탈출기</title>
+<style>
+  /* 폰트는 시스템 폰트만 쓴다. 웹폰트를 받지 않으므로 첫 화면이 즉시 뜬다. */
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --border: #262b36;
+    --text: #e6e8ec;
+    --muted: #8b93a1;
+    --accent: #6ea8fe;
+    --user-bubble: #2b5cd8;
+    --bot-bubble: #21262f;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f6f7f9;
+      --panel: #ffffff;
+      --border: #e2e5ea;
+      --text: #1b1f26;
+      --muted: #6b7280;
+      --accent: #2563eb;
+      --user-bubble: #2563eb;
+      --bot-bubble: #eef0f4;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    height: 100vh;
+    display: flex;
+    justify-content: center;
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.6 -apple-system, "Segoe UI", "Malgun Gothic", sans-serif;
+  }
+  main {
+    width: min(760px, 100%);
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    background: var(--panel);
+    border-left: 1px solid var(--border);
+    border-right: 1px solid var(--border);
+  }
+
+  /* ── 헤더 ── */
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--border);
+  }
+  header h1 { margin: 0; font-size: 16px; font-weight: 600; }
+  #reset {
+    background: none; border: 1px solid var(--border); color: var(--muted);
+    padding: 5px 10px; border-radius: 6px; font-size: 13px; cursor: pointer;
+  }
+  #reset:hover { color: var(--text); border-color: var(--muted); }
+
+  /* ── 말투 선택 ── */
+  #tone-bar { padding: 12px 18px; border-bottom: 1px solid var(--border); }
+  #tone-bar .label { font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+  #presets { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip {
+    padding: 5px 11px; border-radius: 999px; cursor: pointer; font-size: 13px;
+    background: transparent; color: var(--muted);
+    border: 1px solid var(--border);
+  }
+  .chip:hover { color: var(--text); }
+  .chip[aria-pressed="true"] {
+    background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 500;
+  }
+  #custom-wrap { margin-top: 10px; display: none; }
+  #custom-wrap.show { display: block; }
+  #custom-tone {
+    width: 100%; padding: 8px 10px; border-radius: 8px; resize: none;
+    background: var(--bg); color: var(--text); border: 1px solid var(--border);
+    font: inherit; font-size: 14px;
+  }
+  #custom-tone:focus { outline: none; border-color: var(--accent); }
+  #custom-count { font-size: 11px; color: var(--muted); text-align: right; margin-top: 3px; }
+
+  /* ── 대화 ── */
+  #log { flex: 1; overflow-y: auto; padding: 18px; display: flex; flex-direction: column; gap: 12px; }
+  .msg { max-width: 78%; padding: 9px 13px; border-radius: 14px; white-space: pre-wrap; word-break: break-word; }
+  .msg.user { align-self: flex-end; background: var(--user-bubble); color: #fff; border-bottom-right-radius: 4px; }
+  .msg.bot  { align-self: flex-start; background: var(--bot-bubble); border-bottom-left-radius: 4px; }
+  .msg.error { align-self: center; background: transparent; color: #ef4444; font-size: 13px; max-width: 100%; text-align: center; }
+  /* 응답을 기다리는 동안 깜빡이는 커서. 스트리밍이 시작되면 첫 글자가 바로 덮어쓴다. */
+  .msg.bot.pending::after {
+    content: "▋"; color: var(--muted);
+    animation: blink 1s steps(2, start) infinite;
+  }
+  @keyframes blink { to { visibility: hidden; } }
+  #empty { margin: auto; color: var(--muted); font-size: 14px; text-align: center; }
+
+  /* ── 입력 ── */
+  footer { display: flex; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--border); }
+  #input {
+    flex: 1; padding: 10px 12px; border-radius: 10px; resize: none; max-height: 140px;
+    background: var(--bg); color: var(--text); border: 1px solid var(--border); font: inherit;
+  }
+  #input:focus { outline: none; border-color: var(--accent); }
+  #send {
+    padding: 0 18px; border: none; border-radius: 10px; cursor: pointer;
+    background: var(--accent); color: #fff; font-weight: 600; font-size: 14px;
+  }
+  #send:disabled { opacity: .5; cursor: default; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>MZ 탈출기</h1>
+    <button id="reset" type="button">대화 초기화</button>
+  </header>
+
+  <section id="tone-bar">
+    <div class="label">말투</div>
+    <div id="presets"></div>
+    <div id="custom-wrap">
+      <textarea id="custom-tone" rows="2"
+        placeholder="예: 20대가 쓰는 인터넷 밈 말투로, 리액션 크게"></textarea>
+      <div id="custom-count"></div>
+    </div>
+  </section>
+
+  <div id="log"><div id="empty">말투를 고르고 아무 말이나 걸어보세요.</div></div>
+
+  <footer>
+    <textarea id="input" rows="1" placeholder="메시지를 입력하세요 (Enter 전송 · Shift+Enter 줄바꿈)"></textarea>
+    <button id="send" type="button">전송</button>
+  </footer>
+</main>
+
+<script>
+// ─────────────────────────────────────────────────────────────
+// 상태. 대화 히스토리는 이 브라우저 탭 안에만 존재한다.
+// 서버는 무상태(stateless)라 매 요청에 히스토리를 통째로 실어 보낸다.
+// ─────────────────────────────────────────────────────────────
+const history = [];           // [{role: 'user'|'assistant', content: string}]
+let toneId = null;            // 선택된 말투 id
+let maxCustomChars = 200;     // 서버가 알려주는 직접입력 상한
+let busy = false;             // 응답을 받는 중이면 true (중복 전송 방지)
+
+const $log = document.getElementById('log');
+const $presets = document.getElementById('presets');
+const $customWrap = document.getElementById('custom-wrap');
+const $customTone = document.getElementById('custom-tone');
+const $customCount = document.getElementById('custom-count');
+const $input = document.getElementById('input');
+const $send = document.getElementById('send');
+const $reset = document.getElementById('reset');
+
+// ─────────────────────────────────────────────────────────────
+// 말투 버튼 그리기. 목록은 서버(tone.rs)가 유일한 출처다.
+// ─────────────────────────────────────────────────────────────
+async function loadPresets() {
+  const res = await fetch('/api/presets');
+  const data = await res.json();
+  maxCustomChars = data.maxCustomToneChars;
+
+  const items = [...data.presets, { id: 'custom', label: '✎ 직접 입력' }];
+  for (const p of items) {
+    const btn = document.createElement('button');
+    btn.className = 'chip';
+    btn.type = 'button';
+    btn.textContent = p.label;
+    btn.setAttribute('aria-pressed', 'false');
+    btn.onclick = () => selectTone(p.id);
+    btn.dataset.id = p.id;
+    $presets.appendChild(btn);
+  }
+  selectTone(items[0].id);  // 첫 프리셋을 기본 선택
+  updateCustomCount();
+}
+
+function selectTone(id) {
+  toneId = id;
+  for (const btn of $presets.children) {
+    btn.setAttribute('aria-pressed', String(btn.dataset.id === id));
+  }
+  $customWrap.classList.toggle('show', id === 'custom');
+  if (id === 'custom') $customTone.focus();
+}
+
+function updateCustomCount() {
+  const n = [...$customTone.value].length;   // 스프레드로 세야 이모지·한글이 정확히 1자
+  $customCount.textContent = `${n} / ${maxCustomChars}`;
+  $customCount.style.color = n > maxCustomChars ? '#ef4444' : '';
+}
+$customTone.addEventListener('input', updateCustomCount);
+
+// ─────────────────────────────────────────────────────────────
+// 화면에 말풍선 추가
+// ─────────────────────────────────────────────────────────────
+function addBubble(kind, text) {
+  document.getElementById('empty')?.remove();
+  const el = document.createElement('div');
+  el.className = `msg ${kind}`;
+  el.textContent = text;          // textContent라 HTML이 섞여도 그대로 문자로 표시된다
+  $log.appendChild(el);
+  $log.scrollTop = $log.scrollHeight;
+  return el;
+}
+
+// ─────────────────────────────────────────────────────────────
+// 전송 → SSE 수신
+// ─────────────────────────────────────────────────────────────
+async function send() {
+  if (busy) return;
+
+  const text = $input.value.trim();
+  if (!text) return;
+
+  if (toneId === 'custom' && !$customTone.value.trim()) {
+    addBubble('error', '직접 입력 말투를 적어주세요.');
+    return;
+  }
+
+  busy = true;
+  $send.disabled = true;
+  $input.value = '';
+  $input.style.height = 'auto';
+
+  addBubble('user', text);
+  history.push({ role: 'user', content: text });
+
+  // 빈 말풍선을 먼저 띄우고, 토큰이 도착할 때마다 여기에 이어 붙인다.
+  const $bot = addBubble('bot', '');
+  $bot.classList.add('pending');
+  let answer = '';
+
+  try {
+    const res = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messages: history,
+        tone: toneId,
+        custom_tone: toneId === 'custom' ? $customTone.value : null,
+      }),
+    });
+
+    // 서버가 에러를 낼 때는 SSE가 아니라 JSON을 준다.
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `요청 실패 (${res.status})`);
+    }
+
+    // ── SSE 파싱 ──
+    // 스트림은 청크 경계가 줄 단위와 일치하지 않는다. 예를 들어 "data: {"만 오고
+    // 나머지가 다음 청크에 올 수 있다. 그래서 버퍼에 쌓아 두고 완결된 줄만 꺼내 쓴다.
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+
+      // 마지막 조각은 아직 완결되지 않았을 수 있으므로 버퍼에 남겨 둔다.
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith('data:')) continue;
+
+        const payload = trimmed.slice(5).trim();
+        if (payload === '[DONE]') continue;
+
+        try {
+          const delta = JSON.parse(payload).choices?.[0]?.delta?.content;
+          if (delta) {
+            answer += delta;
+            $bot.classList.remove('pending');
+            $bot.textContent = answer;
+            $log.scrollTop = $log.scrollHeight;
+          }
+        } catch {
+          // 파싱 못 한 줄(하트비트, 주석 등)은 그냥 무시한다.
+        }
+      }
+    }
+
+    if (answer) {
+      history.push({ role: 'assistant', content: answer });
+    } else {
+      $bot.remove();
+      addBubble('error', '빈 응답을 받았습니다.');
+      history.pop();   // 답을 못 받았으니 방금 넣은 user 메시지도 되돌린다
+    }
+  } catch (e) {
+    $bot.remove();
+    addBubble('error', e.message);
+    history.pop();     // 실패한 턴은 히스토리에 남기지 않는다
+  } finally {
+    $bot.classList.remove('pending');
+    busy = false;
+    $send.disabled = false;
+    $input.focus();
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// 입력 이벤트
+// ─────────────────────────────────────────────────────────────
+$send.onclick = send;
+
+$input.addEventListener('keydown', (e) => {
+  // Enter는 전송, Shift+Enter는 줄바꿈.
+  // isComposing 검사가 없으면 한글 입력 중 조합을 확정하는 Enter가 전송으로 잡힌다.
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+    e.preventDefault();
+    send();
+  }
+});
+
+// 입력창 높이를 내용에 맞춰 늘린다.
+$input.addEventListener('input', () => {
+  $input.style.height = 'auto';
+  $input.style.height = Math.min($input.scrollHeight, 140) + 'px';
+});
+
+$reset.onclick = () => {
+  history.length = 0;
+  $log.innerHTML = '<div id="empty">말투를 고르고 아무 말이나 걸어보세요.</div>';
+  $input.focus();
+};
+
+loadPresets();
+</script>
+</body>
+</html>

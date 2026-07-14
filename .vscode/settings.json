@@ -1,0 +1,15 @@
+{
+  // 이 워크스페이스에서만 적용되는 LSP 설정.
+  // rustup이 rust-toolchain.toml에 고정된 툴체인의 rust-analyzer를 실행하도록 위임한다.
+  // 전역에 설치된 다른 버전이 있어도 이 레포에서는 레포 툴체인 것이 쓰인다.
+  "rust-analyzer.server.path": "rust-analyzer",
+  "rust-analyzer.check.command": "clippy",
+  "rust-analyzer.cargo.buildScripts.enable": true,
+  "editor.formatOnSave": true,
+  "[rust]": {
+    "editor.defaultFormatter": "rust-lang.rust-analyzer"
+  },
+  "files.watcherExclude": {
+    "**/target/**": true
+  }
+}

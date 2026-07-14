@@ -1,0 +1,12 @@
+# 이 레포에서 쓸 툴체인을 고정한다.
+# 이 디렉터리 안에서 cargo/rustc/rust-analyzer를 실행하면 rustup이 아래 툴체인으로
+# 자동 전환하고, 없으면 알아서 내려받는다. 전역 default 툴체인과 무관하게 동작하므로
+# 다른 레포와 버전이 충돌하지 않는다.
+[toolchain]
+channel = "stable"
+components = [
+    "rust-analyzer", # LSP 서버. 에디터의 자동완성/정의이동/인레이힌트를 담당한다.
+    "rust-src",      # rust-analyzer가 표준 라이브러리 내부까지 해석하려면 필요하다.
+    "rustfmt",       # 포매터
+    "clippy",        # 린터
+]
