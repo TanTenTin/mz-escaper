@@ -73,7 +73,10 @@ async fn main() {
         .route("/api/chat", post(chat::handle_chat))
         .route("/healthz", get(|| async { "ok" }))
         // 클라이언트 IP를 판별해 익스텐션에 넣는 미들웨어. 레이트 리밋이 이 값을 쓴다.
-        .layer(middleware::from_fn_with_state(state.clone(), resolve_client_ip))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            resolve_client_ip,
+        ))
         .with_state(state.clone());
 
     let addr: SocketAddr = state

@@ -29,8 +29,10 @@ impl Config {
         // .env가 있으면 읽고, 없으면 조용히 넘어간다(운영에서는 진짜 환경변수를 쓴다).
         let _ = dotenvy::dotenv();
 
-        let api_key = std::env::var("LLM_API_KEY")
-            .map_err(|_| "LLM_API_KEY 가 설정되지 않았습니다. .env.example 을 .env 로 복사해 채우세요.".to_string())?;
+        let api_key = std::env::var("LLM_API_KEY").map_err(|_| {
+            "LLM_API_KEY 가 설정되지 않았습니다. .env.example 을 .env 로 복사해 채우세요."
+                .to_string()
+        })?;
 
         if api_key.trim().is_empty() {
             return Err("LLM_API_KEY 가 비어 있습니다.".to_string());

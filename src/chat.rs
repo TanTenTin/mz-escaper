@@ -176,7 +176,9 @@ fn sanitize_history(messages: Vec<InMessage>) -> Result<Vec<CleanMessage>, Strin
 
         let len = content.chars().count();
         if len > MAX_MESSAGE_CHARS {
-            return Err(format!("메시지가 너무 깁니다. {MAX_MESSAGE_CHARS}자 이내로 입력해주세요."));
+            return Err(format!(
+                "메시지가 너무 깁니다. {MAX_MESSAGE_CHARS}자 이내로 입력해주세요."
+            ));
         }
 
         total_chars += len;
