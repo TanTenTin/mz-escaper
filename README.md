@@ -106,7 +106,74 @@ UI(HTML/CSS/JS)는 `include_str!` 로 바이너리에 내장되어 있어 정적
 | GET | `/api/update` | 새 버전 여부. **루프백 전용** |
 | POST | `/api/update/apply` | 새 버전으로 교체 후 재시작. **루프백 전용** |
 
-## 배포와 업데이트
+## 백엔드 배포 (내 서버)
+
+Docker 로 띄운다. TLS 와 `mz.tan-kim.com` 도메인은 같은 호스트의 nginx 가 맡고, 컨테이너는
+평문 HTTP 로 루프백에만 열린다 — nginx 를 건너뛴 직접 접근을 막기 위해서다.
+
+```
+DNS: mz.tan-kim.com
+        │
+        ▼
+   nginx (TLS 종료)  ──proxy_pass──▶  127.0.0.1:8080
+                                          │
+                                   docker compose
+                                     mz-escaper (백엔드 모드)
+                                          │
+                                          ▼
+                                   llm.tan-kim.com
+```
+
+### 최초 1회 — 서버 준비
+
+```bash
+git clone https://github.com/TanTenTin/mz-escaper.git ~/mz-escaper
+cd ~/mz-escaper
+
+# .env 작성 (git 제외 대상. CI 의 git reset --hard 가 건드리지 않는다)
+cat > .env <<'EOF'
+LLM_API_KEY=<게이트웨이 키>
+EOF
+
+docker compose up -d --build
+curl -fsS http://127.0.0.1:8080/healthz   # → ok
+```
+
+nginx 는 `deploy/nginx.conf.example` 을 참고해 사이트를 하나 추가하고, 인증서는
+`sudo certbot --nginx -d mz.tan-kim.com` 로 발급한다.
+
+### CI/CD (GitHub Actions)
+
+`main` 에 `src/**` · `static/**` · `Cargo.*` · `Dockerfile` · `docker-compose.yml` 변경을 push 하면
+`.github/workflows/deploy.yml` 이 **fmt · clippy · test 를 먼저 돌리고(테스트 게이트), 통과 시에만**
+SSH 로 서버에 붙어 `git reset --hard origin/main` → `docker compose up -d --build` 한다.
+검사가 깨지면 운영에 나가지 않는다. PR 에서는 검사만 하고 배포하지 않는다.
+
+필요한 GitHub Secrets (`llm-server` 레포와 같은 값):
+
+| Secret | 값 |
+|--------|----|
+| `ORACLE_HOST` | 서버 공인 IP |
+| `ORACLE_USER` | SSH 유저 |
+| `ORACLE_SSH_KEY` | SSH 개인키 전체 내용 |
+
+### nginx 에서 틀리기 쉬운 세 줄
+
+- **`proxy_buffering off`** — 없으면 nginx 가 SSE 를 통째로 모았다가 내보내서 스트리밍이
+  무너진다. 답변이 다 끝난 뒤에야 화면에 뜬다.
+- **`proxy_read_timeout 300s`** — 기본값 60초를 넘기는 긴 답변에서 스트림이 끊긴다.
+- **`proxy_set_header X-Forwarded-For $remote_addr;`** — 흔히 쓰는
+  `$proxy_add_x_forwarded_for` 를 쓰면 안 된다. 그건 클라이언트가 보낸 헤더 뒤에 실제 IP 를
+  덧붙이는데, 서버는 맨 앞 항목을 신뢰한다(`resolve_client_ip`). 유저가 헤더를 위조해
+  레이트 리밋을 우회할 수 있다.
+
+### 컨테이너에서는 자체 업데이트를 끈다
+
+compose 가 `UPDATE_MANIFEST_URL: ""` 로 덮어쓴다. 컨테이너 안에서 바이너리를 갈아끼워도
+재시작하면 이미지의 것으로 되돌아가므로 의미가 없다. 백엔드 버전은 push 하면 CI 가 올린다.
+유저 exe 의 자체 업데이트와는 무관하다.
+
+## 배포와 업데이트 (유저 exe)
 
 유저에게 `mz-escaper.exe` 를 나눠 주는 방식이라, 새 버전을 알리고 갈아끼우는 일을
 바이너리가 스스로 한다. 배포는 **GitHub Releases** 로 하고, 릴리스에 함께 올라가는

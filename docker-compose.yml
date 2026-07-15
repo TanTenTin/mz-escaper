@@ -1,0 +1,40 @@
+# 백엔드 실행. 서버에서 `docker compose up -d --build` 하나로 뜬다.
+#
+# TLS 와 도메인(mz.tan-kim.com)은 앞단 nginx 가 맡는다. 이 컨테이너는 평문 HTTP 만 말하고,
+# 포트도 루프백에만 연다 — 외부에서 nginx 를 건너뛰고 직접 닿을 수 없게 한다.
+
+services:
+  mz-escaper:
+    build: .
+    image: mz-escaper:latest
+    container_name: mz-escaper
+    restart: unless-stopped
+
+    # LLM_API_KEY 는 여기(.env)서만 들어온다. 이미지에는 굽지 않는다.
+    env_file: .env
+
+    environment:
+      # .env 에 뭐가 적혀 있든 아래 값이 이긴다. 백엔드로서 반드시 이래야 하는 것들이다.
+      BIND_ADDR: 0.0.0.0:8080
+
+      # nginx 가 X-Forwarded-For 를 채워 준다. 이게 false 면 모든 요청이 nginx 의 IP 로
+      # 보여서 레이트 리밋이 전체 유저를 하나로 묶어 버린다.
+      # 반대로 nginx 없이 직접 노출하면서 true 로 두면 헤더 위조로 리밋이 무력화된다.
+      TRUST_PROXY: "true"
+
+      # 컨테이너에서는 자체 업데이트를 끈다. 컨테이너 안에서 바이너리를 갈아끼워도
+      # 재시작하면 이미지의 것으로 되돌아가므로 의미가 없다. 백엔드 버전은 이미지를
+      # 다시 빌드해서 올린다. (유저 exe 의 자체 업데이트와는 무관하다)
+      UPDATE_MANIFEST_URL: ""
+
+    ports:
+      # 127.0.0.1 바인딩. 이걸 "8080:8080" 으로 바꾸면 서버의 모든 인터페이스에 열려
+      # nginx 를 우회한 평문 접근이 가능해진다.
+      - "127.0.0.1:8080:8080"
+
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s

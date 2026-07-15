@@ -1,0 +1,45 @@
+# mz.tan-kim.com → 컨테이너(127.0.0.1:8080).
+# certbot 으로 인증서를 발급하면 아래 ssl_* 줄은 certbot 이 알아서 채워 넣는다.
+#
+#   sudo certbot --nginx -d mz.tan-kim.com
+
+server {
+    listen 80;
+    server_name mz.tan-kim.com;
+    # certbot 이 443 서버 블록을 만들고 여기로 리다이렉트를 넣는다.
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name mz.tan-kim.com;
+
+    ssl_certificate     /etc/letsencrypt/live/mz.tan-kim.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/mz.tan-kim.com/privkey.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+
+        # SSE 가 이 세 줄에 걸려 있다.
+        #
+        # proxy_buffering off: nginx 는 기본적으로 업스트림 응답을 버퍼에 모았다가 한꺼번에
+        #   내보낸다. 그러면 스트리밍이 통째로 무너져 답변이 다 끝난 뒤에야 화면에 뜬다.
+        #   (서버가 X-Accel-Buffering: no 헤더도 보내지만, 명시해 두는 편이 확실하다)
+        # proxy_http_version 1.1: 기본값 1.0 은 청크 전송을 못 한다.
+        # proxy_read_timeout: 긴 답변이 60초(기본값)를 넘기면 스트림이 끊긴다.
+        proxy_buffering off;
+        proxy_http_version 1.1;
+        proxy_read_timeout 300s;
+
+        # 레이트 리밋이 이 헤더로 클라이언트를 구분한다. TRUST_PROXY=true 와 짝이다.
+        #
+        # $remote_addr 로 **덮어쓴다**. 흔히 쓰는 $proxy_add_x_forwarded_for 를 쓰면 안 된다 —
+        # 그건 클라이언트가 보낸 X-Forwarded-For 뒤에 실제 IP 를 덧붙이는데, 서버는 맨 앞
+        # 항목을 클라이언트 IP 로 신뢰한다(main.rs 의 resolve_client_ip). 즉 유저가 헤더를
+        # 위조하면 매 요청마다 다른 IP 인 척할 수 있고 레이트 리밋이 통째로 무력화된다.
+        # 프록시가 이 한 단뿐이므로 덮어쓰는 게 맞다.
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header Host $host;
+    }
+}
