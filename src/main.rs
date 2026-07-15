@@ -94,6 +94,8 @@ struct Prepared {
     listener: tokio::net::TcpListener,
     app: Router,
     /// 실제로 바인딩된 주소. 창(WebView)이 이 주소를 연다. 동적 포트(:0)라도 확정값이다.
+    /// 이 값을 읽는 건 창을 여는 Windows 경로뿐이라, 백엔드(Linux)에서는 미사용이다.
+    #[cfg_attr(not(windows), allow(dead_code))]
     local_addr: SocketAddr,
     /// 네이티브 창을 열지 여부. Windows + 릴레이 모드 + MZ_HEADLESS 미설정일 때만 true.
     windowed: bool,
@@ -411,7 +413,8 @@ async fn autostart_set(
     }
     #[cfg(not(windows))]
     {
-        let _ = req;
+        // 필드를 실제로 읽어야 dead_code 로 걸리지 않는다(이 분기는 Windows 아닌 빌드용).
+        let _ = req.enabled;
         (
             StatusCode::BAD_REQUEST,
             Json(json!({ "error": "이 플랫폼에서는 지원하지 않습니다." })),
