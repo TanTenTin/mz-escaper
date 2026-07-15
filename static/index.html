@@ -4,6 +4,17 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>MZ 탈출기</title>
+<!-- 저장된 테마를 화면이 그려지기 전에 먼저 입힌다. 여기서 하지 않으면 기본 색으로
+     한 번 깜빡였다가 테마 색으로 바뀌는 플래시가 보인다. -->
+<script>
+  try {
+    var savedTheme = localStorage.getItem('mz-theme');
+    if (savedTheme) document.documentElement.setAttribute('data-theme', savedTheme);
+    // 글자 크기도 렌더 전에 입혀야 크기가 바뀌며 다시 그려지는 깜빡임이 없다.
+    var savedFont = localStorage.getItem('mz-font');
+    if (savedFont) document.documentElement.style.setProperty('--chat-font', savedFont + 'px');
+  } catch (e) { /* 프라이빗 모드 등에서 localStorage 접근 실패는 무시 */ }
+</script>
 <style>
   /* 폰트는 시스템 폰트만 쓴다. 웹폰트를 받지 않으므로 첫 화면이 즉시 뜬다. */
   :root {
@@ -28,6 +39,60 @@
       --bot-bubble: #eef0f4;
     }
   }
+
+  /* ── MZ 테마 ──
+     data-theme 가 붙으면 시스템 자동 색(:root, prefers-color-scheme)을 덮어쓴다.
+     선택자 특이도가 :root 보다 높아(속성 선택자 포함) 미디어쿼리보다 우선한다.
+     각 테마는 MZ 세대 사이에서 유행한 먹거리에서 색을 땄다. */
+
+  /* 요거트: 크리미한 우윳빛 배경에 베리핑크 포인트 */
+  :root[data-theme="yogurt"] {
+    --bg: #fdf5f2;
+    --panel: #ffffff;
+    --border: #f2e2db;
+    --text: #4a3b39;
+    --muted: #b09a94;
+    --accent: #e5809f;
+    --user-bubble: #e5809f;
+    --bot-bubble: #f8ebe6;
+  }
+
+  /* 탕후루: 설탕 코팅의 새빨간 캔디 레드 */
+  :root[data-theme="tanghulu"] {
+    --bg: #fff3f2;
+    --panel: #ffffff;
+    --border: #ffd7d1;
+    --text: #5a1f1f;
+    --muted: #c78d88;
+    --accent: #e5352f;
+    --user-bubble: #e5352f;
+    --bot-bubble: #ffe1dc;
+  }
+
+  /* 말차: 곱게 간 녹차의 연둣빛~짙은 녹색 */
+  :root[data-theme="matcha"] {
+    --bg: #f2f6ec;
+    --panel: #ffffff;
+    --border: #dde7cd;
+    --text: #303d22;
+    --muted: #8a9a74;
+    --accent: #789a3c;
+    --user-bubble: #789a3c;
+    --bot-bubble: #e7efdb;
+  }
+
+  /* 두바이 초콜릿: 짙은 초콜릿 바탕에 피스타치오 그린 포인트 (유일한 다크 테마) */
+  :root[data-theme="dubai"] {
+    --bg: #241a15;
+    --panel: #2f2119;
+    --border: #3f2d22;
+    --text: #f1e7dd;
+    --muted: #b39a88;
+    --accent: #8fb84e;
+    --user-bubble: #8fb84e;
+    --bot-bubble: #3a2a20;
+  }
+
   * { box-sizing: border-box; }
   body {
     margin: 0;
@@ -50,6 +115,7 @@
 
   /* ── 헤더 ── */
   header {
+    position: relative;           /* 테마 팝오버의 기준점 */
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -57,11 +123,77 @@
     border-bottom: 1px solid var(--border);
   }
   header h1 { margin: 0; font-size: 16px; font-weight: 600; }
+  /* 제목 옆에 붙는 버전. 존재감이 없도록 작고 흐리게 둔다. */
+  .brand { display: flex; align-items: baseline; gap: 8px; }
+  .version { font-size: 11px; color: var(--muted); opacity: .55; }
+  .header-actions { display: flex; align-items: center; gap: 8px; }
   #reset {
     background: none; border: 1px solid var(--border); color: var(--muted);
     padding: 5px 10px; border-radius: 6px; font-size: 13px; cursor: pointer;
   }
   #reset:hover { color: var(--text); border-color: var(--muted); }
+  /* 아이콘 버튼(설정 톱니바퀴 등) */
+  .icon-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    background: none; border: 1px solid var(--border); color: var(--muted);
+    padding: 5px; border-radius: 6px; cursor: pointer;
+  }
+  .icon-btn:hover { color: var(--text); border-color: var(--muted); }
+  .icon-btn svg { display: block; }
+
+  /* ── 설정 팝오버 ── */
+  .settings-menu {
+    position: absolute; top: 52px; right: 18px; z-index: 10;
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 8px; min-width: 200px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, .18);
+  }
+  .settings-menu[hidden] { display: none; }
+  /* 섹션 사이 구분선. 나중에 설정 항목이 늘어나도 이 구조를 그대로 쓴다. */
+  .settings-section + .settings-section {
+    margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border);
+  }
+  .settings-label { font-size: 11px; color: var(--muted); padding: 2px 10px 6px; }
+  .theme-item {
+    display: flex; align-items: center; gap: 10px; width: 100%;
+    padding: 8px 10px; border: none; border-radius: 7px; cursor: pointer;
+    background: transparent; color: var(--text); font: inherit; font-size: 13px; text-align: left;
+  }
+  .theme-item:hover { background: var(--bot-bubble); }
+  /* 각 테마를 대표하는 색 점 */
+  .theme-dot { width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0; border: 1px solid rgba(0, 0, 0, .12); }
+  .theme-name { flex: 1; }               /* 이름이 남는 공간을 차지해 표식들을 오른쪽으로 민다 */
+  .theme-moon { display: inline-flex; color: var(--muted); }   /* 다크 테마 표식(초승달) */
+  /* 현재 선택된 테마에 체크 표시 */
+  .theme-item[aria-checked="true"] { font-weight: 600; }
+  .theme-item[aria-checked="true"]::after { content: "✓"; color: var(--accent); }
+
+  /* 글자 크기 세그먼트 버튼 */
+  .seg { display: flex; gap: 4px; padding: 0 10px; }
+  .seg button {
+    flex: 1; padding: 6px 0; border: 1px solid var(--border); border-radius: 7px;
+    background: transparent; color: var(--muted); cursor: pointer; font: inherit; font-size: 12px;
+  }
+  .seg button:hover { color: var(--text); }
+  .seg button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+  /* 토글 행: 라벨 + 스위치 */
+  .toggle-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 7px 10px; font-size: 13px; cursor: pointer;
+  }
+  /* 켜고 끄는 스위치. 기본 체크박스 모양을 지우고 알약형으로 그린다. */
+  .switch {
+    appearance: none; -webkit-appearance: none; position: relative; flex-shrink: 0;
+    width: 34px; height: 20px; border-radius: 999px; background: var(--border);
+    cursor: pointer; transition: background .15s;
+  }
+  .switch:checked { background: var(--accent); }
+  .switch::after {
+    content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px;
+    border-radius: 50%; background: #fff; transition: left .15s;
+  }
+  .switch:checked::after { left: 16px; }
 
   /* ── 말투 선택 ── */
   #tone-bar { padding: 12px 18px; border-bottom: 1px solid var(--border); }
@@ -87,7 +219,8 @@
   #custom-count { font-size: 11px; color: var(--muted); text-align: right; margin-top: 3px; }
 
   /* ── 대화 ── */
-  #log { flex: 1; overflow-y: auto; padding: 18px; display: flex; flex-direction: column; gap: 12px; }
+  /* 대화 글자 크기는 설정으로 바꾼다(--chat-font). 말풍선이 이 크기를 물려받는다. */
+  #log { flex: 1; overflow-y: auto; padding: 18px; display: flex; flex-direction: column; gap: 12px; font-size: var(--chat-font, 15px); }
   .msg { max-width: 78%; padding: 9px 13px; border-radius: 14px; white-space: pre-wrap; word-break: break-word; }
   .msg.user { align-self: flex-end; background: var(--user-bubble); color: #fff; border-bottom-right-radius: 4px; }
   .msg.bot  { align-self: flex-start; background: var(--bot-bubble); border-bottom-left-radius: 4px; }
@@ -136,8 +269,46 @@
 <body>
 <main>
   <header>
-    <h1>MZ 탈출기</h1>
-    <button id="reset" type="button">대화 초기화</button>
+    <div class="brand">
+      <h1>MZ 탈출기</h1>
+      <span id="version" class="version"></span>
+    </div>
+    <div class="header-actions">
+      <button id="reset" type="button">대화 초기화</button>
+      <button id="settings-toggle" class="icon-btn" type="button" aria-haspopup="true" aria-expanded="false" title="설정">
+        <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="3"></circle>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+        </svg>
+      </button>
+    </div>
+    <!-- 설정 팝오버. 지금은 테마만 담고, 항목이 늘면 settings-section 을 이어 붙인다. -->
+    <div id="settings-menu" class="settings-menu" role="menu" hidden>
+      <div class="settings-section">
+        <div class="settings-label">테마</div>
+        <!-- 테마 항목은 JS(THEMES)가 유일한 출처라 여기서 그린다. -->
+        <div id="theme-list"></div>
+      </div>
+      <div class="settings-section">
+        <div class="settings-label">글자 크기</div>
+        <div id="font-seg" class="seg">
+          <button type="button" data-size="13">작게</button>
+          <button type="button" data-size="15">보통</button>
+          <button type="button" data-size="18">크게</button>
+        </div>
+      </div>
+      <div class="settings-section">
+        <label class="toggle-row" for="opt-remember-tone">
+          <span>마지막 말투 기억</span>
+          <input id="opt-remember-tone" type="checkbox" class="switch">
+        </label>
+        <!-- 자동 실행은 Windows 에서만 지원. 비지원 플랫폼이면 JS가 이 행을 숨긴다. -->
+        <label id="autostart-row" class="toggle-row" for="opt-autostart">
+          <span>Windows 시작 시 실행</span>
+          <input id="opt-autostart" type="checkbox" class="switch">
+        </label>
+      </div>
+    </div>
   </header>
 
   <aside id="update-bar">
@@ -159,7 +330,7 @@
   <div id="log"><div id="empty">말투를 고르고 아무 말이나 걸어보세요.</div></div>
 
   <footer>
-    <textarea id="input" rows="1" placeholder="메시지를 입력하세요 (Enter 전송 · Shift+Enter 줄바꿈)"></textarea>
+    <textarea id="input" rows="1" placeholder="메시지를 입력하세요" title="Enter 전송 · Shift+Enter 줄바꿈"></textarea>
     <button id="send" type="button">전송</button>
   </footer>
 </main>
@@ -175,6 +346,9 @@
 let toneId = null;            // 선택된 말투 id
 let maxCustomChars = 200;     // 서버가 알려주는 직접입력 상한
 let busy = false;             // 응답을 받는 중이면 true (중복 전송 방지)
+// "마지막 말투 기억" 설정. 기본 켜짐('0'일 때만 꺼짐). 켜져 있으면 고른 말투를 저장해
+// 다음 실행 때 그 말투로 시작한다.
+let rememberTone = localStorage.getItem('mz-remember-tone') !== '0';
 
 const $log = document.getElementById('log');
 const $presets = document.getElementById('presets');
@@ -204,7 +378,19 @@ async function loadPresets() {
     btn.dataset.id = p.id;
     $presets.appendChild(btn);
   }
-  selectTone(items[0].id);  // 첫 프리셋을 기본 선택
+
+  // 직접입력 내용도 복원한다(말투가 custom 이 아니어도 미리 채워 두면 다시 고를 때 편하다).
+  const savedCustom = localStorage.getItem('mz-custom-tone');
+  if (savedCustom != null) $customTone.value = savedCustom;
+
+  // "마지막 말투 기억"이 켜져 있고 저장된 말투가 아직 유효하면 그걸로 시작한다.
+  const ids = items.map((p) => p.id);
+  let initial = items[0].id;  // 기본은 첫 프리셋
+  if (rememberTone) {
+    const saved = localStorage.getItem('mz-default-tone');
+    if (saved && ids.includes(saved)) initial = saved;
+  }
+  selectTone(initial);
   updateCustomCount();
 }
 
@@ -215,6 +401,11 @@ function selectTone(id) {
   }
   $customWrap.classList.toggle('show', id === 'custom');
   if (id === 'custom') $customTone.focus();
+
+  // 기억이 켜져 있으면 다음 실행 때 복원할 수 있게 저장한다.
+  if (rememberTone) {
+    try { localStorage.setItem('mz-default-tone', id); } catch (e) { /* 무시 */ }
+  }
 }
 
 function updateCustomCount() {
@@ -222,7 +413,11 @@ function updateCustomCount() {
   $customCount.textContent = `${n} / ${maxCustomChars}`;
   $customCount.style.color = n > maxCustomChars ? '#ef4444' : '';
 }
-$customTone.addEventListener('input', updateCustomCount);
+$customTone.addEventListener('input', () => {
+  updateCustomCount();
+  // 직접입력 내용도 저장해 다음 실행 때 복원한다.
+  try { localStorage.setItem('mz-custom-tone', $customTone.value); } catch (e) { /* 무시 */ }
+});
 
 // ─────────────────────────────────────────────────────────────
 // 화면에 말풍선 추가
@@ -370,11 +565,14 @@ const $updateBar = document.getElementById('update-bar');
 const $updateText = document.getElementById('update-text');
 const $updateNow = document.getElementById('update-now');
 const $updateLater = document.getElementById('update-later');
+const $version = document.getElementById('version');
 
 async function checkUpdate() {
   try {
     const res = await fetch('/api/update');
     const data = await res.json();
+    // current 는 업데이트 유무와 상관없이 항상 온다. 헤더의 버전 표기를 여기서 채운다.
+    if (data.current) $version.textContent = `v${data.current}`;
     if (!data.updateAvailable) return;
 
     const notes = data.notes ? ` — <span id="update-notes">${escapeHtml(data.notes)}</span>` : '';
@@ -429,8 +627,156 @@ function escapeHtml(s) {
   return el.innerHTML;
 }
 
+// ─────────────────────────────────────────────────────────────
+// 테마
+//
+// MZ 세대 사이에서 유행한 먹거리에서 색을 딴 테마들. 선택하면 :root 에 data-theme 를
+// 붙여 CSS 변수를 통째로 갈아끼우고, localStorage 에 저장해 다음 실행 때 복원한다.
+// (첫 적용은 <head> 인라인 스크립트가 렌더 전에 이미 해 둔다 — 여긴 메뉴와 전환만.)
+// ─────────────────────────────────────────────────────────────
+// dark:true 인 테마는 이름 오른편에 초승달을 붙여 다크 테마임을 알린다.
+const THEMES = [
+  // '기본'은 시스템 자동(라이트/다크)이라 특정 색이 없다. 테마를 바꿔도 이 점이 따라
+  // 변하지 않도록 var(--accent) 대신 라이트/다크 반반의 고정 점으로 표현한다.
+  { id: '',         label: '기본',        dot: 'linear-gradient(135deg, #e6e8ec 0 50%, #171a21 50% 100%)' },
+  { id: 'yogurt',   label: '요아정',      dot: '#e5809f' },
+  { id: 'tanghulu', label: '탕후루',      dot: '#e5352f' },
+  { id: 'matcha',   label: '말차',        dot: '#789a3c' },
+  { id: 'dubai',    label: '두바이 초콜릿', dot: '#8fb84e', dark: true },
+];
+
+// 다크 테마 표식으로 쓸 초승달 아이콘.
+const MOON_SVG =
+  '<svg class="theme-moon" viewBox="0 0 24 24" width="13" height="13" aria-label="다크 테마"><path fill="currentColor" d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>';
+
+const $settingsToggle = document.getElementById('settings-toggle');
+const $settingsMenu = document.getElementById('settings-menu');
+const $themeList = document.getElementById('theme-list');
+
+// 현재 테마 id. 저장된 값이 THEMES 에 없으면(구버전 잔재 등) 기본으로 떨어뜨린다.
+let currentTheme = localStorage.getItem('mz-theme') || '';
+if (!THEMES.some((t) => t.id === currentTheme)) currentTheme = '';
+
+function applyTheme(id) {
+  currentTheme = id;
+  if (id) document.documentElement.setAttribute('data-theme', id);
+  else document.documentElement.removeAttribute('data-theme');  // 기본 = 시스템 자동 색
+  try { localStorage.setItem('mz-theme', id); } catch (e) { /* 저장 실패는 무시 */ }
+
+  // 체크 표시 갱신
+  for (const item of $themeList.children) {
+    item.setAttribute('aria-checked', String(item.dataset.id === id));
+  }
+}
+
+// 테마 항목을 그린다.
+for (const t of THEMES) {
+  const item = document.createElement('button');
+  item.type = 'button';
+  item.className = 'theme-item';
+  item.setAttribute('role', 'menuitemradio');
+  item.dataset.id = t.id;
+  item.innerHTML =
+    `<span class="theme-dot" style="background:${t.dot}"></span>` +
+    `<span class="theme-name">${t.label}</span>` +
+    (t.dark ? MOON_SVG : '');
+  item.onclick = () => { applyTheme(t.id); closeSettings(); };
+  $themeList.appendChild(item);
+}
+applyTheme(currentTheme);  // 체크 표시 초기화(색은 이미 head 스크립트가 입혔다)
+
+function openSettings() {
+  $settingsMenu.hidden = false;
+  $settingsToggle.setAttribute('aria-expanded', 'true');
+}
+function closeSettings() {
+  $settingsMenu.hidden = true;
+  $settingsToggle.setAttribute('aria-expanded', 'false');
+}
+
+$settingsToggle.onclick = (e) => {
+  e.stopPropagation();
+  $settingsMenu.hidden ? openSettings() : closeSettings();
+};
+// 바깥을 클릭하거나 ESC 를 누르면 닫는다.
+document.addEventListener('click', (e) => {
+  if (!$settingsMenu.hidden && !$settingsMenu.contains(e.target)) closeSettings();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeSettings();
+});
+
+// ─────────────────────────────────────────────────────────────
+// 글자 크기
+// --chat-font 변수를 바꾸면 #log 가 물려받아 말풍선 크기가 함께 바뀐다.
+// (첫 적용은 <head> 인라인 스크립트가 이미 해 뒀다 — 여긴 세그먼트 상태만 맞춘다.)
+// ─────────────────────────────────────────────────────────────
+const $fontSeg = document.getElementById('font-seg');
+let chatFont = localStorage.getItem('mz-font') || '15';  // 기본 15px
+
+function applyFont(px) {
+  chatFont = px;
+  document.documentElement.style.setProperty('--chat-font', `${px}px`);
+  try { localStorage.setItem('mz-font', px); } catch (e) { /* 무시 */ }
+  for (const b of $fontSeg.children) {
+    b.setAttribute('aria-pressed', String(b.dataset.size === px));
+  }
+}
+for (const b of $fontSeg.children) b.onclick = () => applyFont(b.dataset.size);
+applyFont(chatFont);
+
+// ─────────────────────────────────────────────────────────────
+// 마지막 말투 기억 토글
+// ─────────────────────────────────────────────────────────────
+const $rememberTone = document.getElementById('opt-remember-tone');
+$rememberTone.checked = rememberTone;
+$rememberTone.onchange = () => {
+  rememberTone = $rememberTone.checked;
+  try {
+    localStorage.setItem('mz-remember-tone', rememberTone ? '1' : '0');
+    // 켜는 순간 지금 말투를 기준으로 저장하고, 끄면 저장값을 지운다.
+    if (rememberTone) localStorage.setItem('mz-default-tone', toneId);
+    else localStorage.removeItem('mz-default-tone');
+  } catch (e) { /* 무시 */ }
+};
+
+// ─────────────────────────────────────────────────────────────
+// 시작 시 자동 실행 (Windows 전용)
+// 서버가 supported:false 를 주면(비 Windows) 토글 행 자체를 숨긴다.
+// ─────────────────────────────────────────────────────────────
+const $autostartRow = document.getElementById('autostart-row');
+const $autostart = document.getElementById('opt-autostart');
+
+async function loadAutostart() {
+  try {
+    const res = await fetch('/api/autostart');
+    const data = await res.json();
+    if (!data.supported) { $autostartRow.style.display = 'none'; return; }
+    $autostart.checked = data.enabled;
+  } catch {
+    // 상태를 못 읽으면 잘못된 토글을 보여주느니 숨긴다.
+    $autostartRow.style.display = 'none';
+  }
+}
+
+$autostart.onchange = async () => {
+  const want = $autostart.checked;
+  try {
+    const res = await fetch('/api/autostart', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: want }),
+    });
+    if (!res.ok) throw new Error('설정 실패');
+  } catch {
+    // 레지스트리 쓰기에 실패하면 체크 상태를 원래대로 되돌린다.
+    $autostart.checked = !want;
+  }
+};
+
 loadPresets();
 checkUpdate();
+loadAutostart();
 </script>
 </body>
 </html>

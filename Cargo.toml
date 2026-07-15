@@ -1,6 +1,6 @@
 [package]
 name = "mz-escaper"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 
 [dependencies]
@@ -40,6 +40,8 @@ dotenvy = "0.15"
 tao = "0.30"
 wry = "0.45"
 rfd = "0.15"
+# 시작 시 자동 실행 토글용. HKCU\...\Run 레지스트리 값을 읽고 쓴다.
+winreg = "0.52"
 
 [profile.release]
 opt-level = 3

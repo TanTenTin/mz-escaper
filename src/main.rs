@@ -23,6 +23,10 @@ mod update;
 #[cfg(windows)]
 mod desktop;
 
+// 시작 시 자동 실행 토글도 Windows 전용(레지스트리 Run 키)이다.
+#[cfg(windows)]
+mod autostart;
+
 use axum::{
     extract::{ConnectInfo, Request, State},
     http::{header, StatusCode},
@@ -139,7 +143,9 @@ async fn prepare() -> Prepared {
         .unwrap_or_else(|e| fatal(&format!("{addr} 바인드 실패: {e}")));
 
     // :0 으로 바인딩했으면 실제 포트는 지금 확정된다. 창은 이 값을 열어야 한다.
-    let local_addr = listener.local_addr().expect("바인딩 주소를 읽지 못했습니다");
+    let local_addr = listener
+        .local_addr()
+        .expect("바인딩 주소를 읽지 못했습니다");
 
     let state = AppState {
         limiter: Arc::new(RateLimiter::new(cfg.rate_max_requests, cfg.rate_window)),
@@ -154,6 +160,7 @@ async fn prepare() -> Prepared {
         .route("/api/chat", post(chat::handle_chat))
         .route("/api/update", get(update_status))
         .route("/api/update/apply", post(update_apply))
+        .route("/api/autostart", get(autostart_status).post(autostart_set))
         .route("/healthz", get(|| async { "ok" }))
         // 클라이언트 IP를 판별해 익스텐션에 넣는 미들웨어. 레이트 리밋이 이 값을 쓴다.
         .layer(middleware::from_fn_with_state(
@@ -350,6 +357,67 @@ async fn update_apply(State(state): State<AppState>, Extension(ip): Extension<Ip
     });
 
     Json(json!({ "restarting": true, "version": info.manifest.latest })).into_response()
+}
+
+/// 자동 실행 토글 요청 본문.
+#[derive(serde::Deserialize)]
+struct AutostartReq {
+    enabled: bool,
+}
+
+/// 시작 시 자동 실행 상태 조회.
+///
+/// 업데이트 엔드포인트와 같은 이유로 루프백 전용이다. 남이 원격에서 남의 PC 부팅 항목을
+/// 들여다볼 이유가 없다. `supported` 는 이 플랫폼에서 기능을 쓸 수 있는지 — Windows 가
+/// 아니면 프런트가 토글 자체를 숨긴다.
+async fn autostart_status(Extension(ip): Extension<IpAddr>) -> Response {
+    if let Some(denied) = reject_remote(ip) {
+        return denied;
+    }
+
+    #[cfg(windows)]
+    {
+        Json(json!({ "supported": true, "enabled": autostart::is_enabled() })).into_response()
+    }
+    #[cfg(not(windows))]
+    {
+        Json(json!({ "supported": false, "enabled": false })).into_response()
+    }
+}
+
+/// 시작 시 자동 실행 켜기/끄기. 루프백 전용이다.
+async fn autostart_set(
+    Extension(ip): Extension<IpAddr>,
+    Json(req): Json<AutostartReq>,
+) -> Response {
+    if let Some(denied) = reject_remote(ip) {
+        return denied;
+    }
+
+    #[cfg(windows)]
+    {
+        match autostart::set_enabled(req.enabled) {
+            Ok(()) => Json(json!({ "enabled": req.enabled })).into_response(),
+            Err(e) => {
+                // 실패 원인(레지스트리 경로 등)은 로그로만. 클라이언트에는 일반 메시지.
+                eprintln!("[자동실행] 설정 실패: {e}");
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": "자동 실행 설정에 실패했습니다." })),
+                )
+                    .into_response()
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = req;
+        (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "이 플랫폼에서는 지원하지 않습니다." })),
+        )
+            .into_response()
+    }
 }
 
 /// 업데이트 엔드포인트는 이 PC에서 온 요청만 받는다.
