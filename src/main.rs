@@ -7,11 +7,21 @@
 //! 이 서버가 존재하는 이유는 단 하나, API 키를 브라우저에서 떼어 놓기 위해서다.
 //! 브라우저는 /api/chat 만 알고, 게이트웨이 주소도 모델명도 키도 알지 못한다.
 
+// 릴리스 빌드에서는 콘솔창을 띄우지 않는다. 유저는 exe 를 더블클릭할 뿐이고, 네이티브
+// 창(desktop.rs)이 UI 를 맡는다. 개발(debug) 빌드는 콘솔을 남겨 둬야 로그로 디버깅한다.
+// 이 속성은 Windows 에만 의미가 있고 다른 OS 에서는 무시된다 — 백엔드(Linux)는 영향 없다.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod chat;
 mod config;
 mod ratelimit;
 mod tone;
 mod update;
+
+// 네이티브 창은 Windows 에서만, 그리고 릴레이 모드일 때만 뜬다. Docker 백엔드(Linux)는
+// 이 모듈을 컴파일조차 하지 않는다.
+#[cfg(windows)]
+mod desktop;
 
 use axum::{
     extract::{ConnectInfo, Request, State},
@@ -47,13 +57,53 @@ pub struct AppState {
 /// 요청 때 디스크를 읽지 않는다.
 const INDEX_HTML: &str = include_str!("../static/index.html");
 
-#[tokio::main]
-async fn main() {
+fn main() {
+    // 네이티브 창의 이벤트 루프는 메인 스레드를 차지해야 한다(Windows 요구사항). 그래서
+    // tokio 를 #[tokio::main] 으로 메인에 걸지 않고, 런타임을 손수 만들어 서버는 그 위에서
+    // 돌리고 메인 스레드는 창에 내준다. 헤드리스(백엔드)일 때는 창 없이 서버가 곧 프로세스다.
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("tokio 런타임 생성 실패");
+
+    // 설정 로드 → 업데이트 확인(강제면 여기서 교체·재시작) → 리스너 바인딩까지.
+    let prepared = runtime.block_on(prepare());
+
+    if prepared.windowed {
+        // 서버는 백그라운드에서 돌리고, 메인 스레드는 창 이벤트 루프에 넘긴다.
+        runtime.spawn(serve(prepared.listener, prepared.app));
+
+        #[cfg(windows)]
+        desktop::run(prepared.local_addr); // 창이 닫히면 프로세스 종료 → 돌아오지 않는다
+
+        // windowed 는 Windows 에서만 true 라(should_open_window) 여기 닿지 않는다.
+        #[cfg(not(windows))]
+        unreachable!("windowed 모드는 Windows 에서만 활성화된다");
+    } else {
+        // 헤드리스: 서버가 곧 프로세스다. 종료 시그널을 받을 때까지 여기서 블록된다.
+        runtime.block_on(serve(prepared.listener, prepared.app));
+    }
+}
+
+/// prepare() 의 결과. 서버를 띄울 재료와, 창을 열지 여부·주소를 함께 담는다.
+struct Prepared {
+    listener: tokio::net::TcpListener,
+    app: Router,
+    /// 실제로 바인딩된 주소. 창(WebView)이 이 주소를 연다. 동적 포트(:0)라도 확정값이다.
+    local_addr: SocketAddr,
+    /// 네이티브 창을 열지 여부. Windows + 릴레이 모드 + MZ_HEADLESS 미설정일 때만 true.
+    windowed: bool,
+}
+
+/// 서버를 띄우기 직전까지의 준비. 리스너를 실제로 바인딩해 확정된 주소까지 확보한다.
+///
+/// 업데이트 확인이 여기 포함된다. 강제 업데이트(현재 버전 < minimum)면 이 안에서 교체 후
+/// 재시작하므로 이 함수는 돌아오지 않는다.
+async fn prepare() -> Prepared {
     let cfg = match Config::from_env() {
         Ok(c) => c,
         Err(msg) => {
-            eprintln!("[설정 오류] {msg}");
-            std::process::exit(1);
+            fatal(&format!("설정 오류: {msg}"));
         }
     };
 
@@ -66,9 +116,30 @@ async fn main() {
         .build()
         .expect("HTTP 클라이언트 생성 실패");
 
-    // 업데이트 확인은 서버를 띄우기 전에 한다. 강제 업데이트면 여기서 교체 후 재시작하며,
-    // 아래 코드는 실행되지 않는다.
+    // 업데이트 확인은 서버를 띄우기 전에 한다. 강제 업데이트면 여기서 교체 후 재시작한다.
     let update_info = check_for_update(&http, &cfg).await;
+
+    let windowed = should_open_window(&cfg);
+
+    // 창을 여는 데스크톱 모드에서 BIND_ADDR 을 따로 주지 않았으면, 고정 포트 대신 빈 포트를
+    // 자동 할당받는다(:0). 8080 이 이미 점유돼 있어도 충돌 없이 뜨고, 유저는 포트를 알 필요가
+    // 없다 — 창이 확정된 주소를 알아서 연다.
+    let bind_str = if windowed && std::env::var("BIND_ADDR").is_err() {
+        "127.0.0.1:0".to_string()
+    } else {
+        cfg.bind_addr.clone()
+    };
+
+    let addr: SocketAddr = bind_str
+        .parse()
+        .unwrap_or_else(|_| fatal(&format!("BIND_ADDR 형식이 잘못되었습니다: {bind_str}")));
+
+    let listener = tokio::net::TcpListener::bind(addr)
+        .await
+        .unwrap_or_else(|e| fatal(&format!("{addr} 바인드 실패: {e}")));
+
+    // :0 으로 바인딩했으면 실제 포트는 지금 확정된다. 창은 이 값을 열어야 한다.
+    let local_addr = listener.local_addr().expect("바인딩 주소를 읽지 못했습니다");
 
     let state = AppState {
         limiter: Arc::new(RateLimiter::new(cfg.rate_max_requests, cfg.rate_window)),
@@ -91,22 +162,11 @@ async fn main() {
         ))
         .with_state(state.clone());
 
-    let addr: SocketAddr = state
-        .cfg
-        .bind_addr
-        .parse()
-        .unwrap_or_else(|_| panic!("BIND_ADDR 형식이 잘못되었습니다: {}", state.cfg.bind_addr));
-
-    let listener = tokio::net::TcpListener::bind(addr)
-        .await
-        .unwrap_or_else(|e| panic!("{addr} 바인드 실패: {e}"));
-
+    // 로그는 debug 빌드에서만 콘솔에 보인다(릴리스는 windows_subsystem=windows 로 콘솔 없음).
     println!(
-        "mz-escaper v{} 실행 중 → http://{addr}",
+        "mz-escaper v{} 실행 중 → http://{local_addr}",
         update::CURRENT_VERSION
     );
-    // 모드를 첫 줄에 찍는다. 백엔드로 띄웠다고 생각했는데 .env 를 안 읽어 릴레이로 뜨는
-    // 사고는 조용히 일어나면 원인을 찾기 어렵다.
     if state.cfg.is_backend() {
         println!("  모드: 백엔드 (게이트웨이 직접 호출)");
         println!("  모델: {}", state.cfg.model);
@@ -117,7 +177,7 @@ async fn main() {
     if let Some(info) = &state.update {
         if info.decision == Decision::Optional {
             println!(
-                "  새 버전 v{} 이 있습니다. 브라우저 화면에서 업데이트할 수 있습니다.",
+                "  새 버전 v{} 이 있습니다. 화면에서 업데이트할 수 있습니다.",
                 info.manifest.latest
             );
         }
@@ -128,6 +188,16 @@ async fn main() {
         state.cfg.rate_max_requests
     );
 
+    Prepared {
+        listener,
+        app,
+        local_addr,
+        windowed,
+    }
+}
+
+/// axum 서버를 띄우고 종료 시그널까지 블록된다.
+async fn serve(listener: tokio::net::TcpListener, app: Router) {
     // into_make_service_with_connect_info: 핸들러가 소켓의 peer 주소를 볼 수 있게 한다.
     axum::serve(
         listener,
@@ -136,6 +206,31 @@ async fn main() {
     .with_graceful_shutdown(shutdown_signal())
     .await
     .expect("서버 실행 실패");
+}
+
+/// 네이티브 창을 열지 판단한다.
+///
+/// Windows + 릴레이 모드일 때만 연다. 백엔드는 헤드리스(Docker)로 돌아야 하므로 창을 열지
+/// 않는다. `MZ_HEADLESS` 를 주면 Windows 릴레이라도 창 없이 띄운다 — 자동화 테스트용이다.
+fn should_open_window(cfg: &Config) -> bool {
+    #[cfg(windows)]
+    {
+        !cfg.is_backend() && std::env::var("MZ_HEADLESS").is_err()
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = cfg;
+        false
+    }
+}
+
+/// 치명적 오류로 종료한다. 릴리스 빌드는 콘솔이 없어 eprintln 이 안 보이므로, Windows 에서는
+/// 네이티브 대화상자로도 알린다.
+fn fatal(message: &str) -> ! {
+    eprintln!("[치명적 오류] {message}");
+    #[cfg(windows)]
+    desktop::show_error(message);
+    std::process::exit(1);
 }
 
 /// 시작 시 업데이트 매니페스트를 확인한다.

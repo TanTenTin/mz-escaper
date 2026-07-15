@@ -29,6 +29,18 @@ self-replace = "1"
 # .env 파일 로딩. 운영에서는 실제 환경변수를 쓰면 되고, 없으면 조용히 넘어간다.
 dotenvy = "0.15"
 
+# 유저에게 배포되는 Windows exe 를 네이티브 창으로 띄운다. 콘솔창 대신 진짜 데스크톱
+# 창 안에 WebView2(엣지 엔진)로 기존 UI 를 그린다.
+#   - tao: 창과 이벤트 루프 (winit 계열)
+#   - wry: 그 창 안에 WebView 를 올린다
+# cfg(windows) 로 묶는 이유: Docker 백엔드(Linux)는 이 크레이트들을 컴파일조차 하지
+# 않는다. 백엔드는 창을 열지 않으므로 필요도 없고, Linux 에서 WebKitGTK 의존을 끌어오는
+# 것도 피한다. rfd 는 WebView2 런타임이 없을 때 안내 대화상자를 띄우는 용도다.
+[target.'cfg(windows)'.dependencies]
+tao = "0.30"
+wry = "0.45"
+rfd = "0.15"
+
 [profile.release]
 opt-level = 3
 lto = true          # 링크 타임 최적화. 바이너리 크기와 속도 모두 개선.
