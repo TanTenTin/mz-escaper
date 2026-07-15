@@ -74,7 +74,7 @@ pub async fn handle_chat(
         Err(msg) => return error_response(StatusCode::BAD_REQUEST, &msg),
     };
 
-    // 3) 히스토리 검증. 릴레이 모드에서도 길이 상한을 여기서 적용한다. 유저 PC의 exe가
+    // 3) 입력 검증. 릴레이 모드에서도 길이 상한을 여기서 적용한다. 유저 PC의 exe가
     //    1차 관문이 되므로, 백엔드에 닿는 요청의 크기가 미리 걸러진다.
     //    (물론 백엔드도 같은 검증을 다시 한다 — exe는 유저 손에 있어 신뢰할 수 없다.)
     let history = match sanitize_history(req.messages) {
@@ -82,20 +82,29 @@ pub async fn handle_chat(
         Err(msg) => return error_response(StatusCode::BAD_REQUEST, &msg),
     };
 
+    // 이 서비스는 대화가 아니라 말투 변환이다. 직전 주고받은 내용을 모델에 함께 주면,
+    // 같은 문장을 말투만 바꿔 다시 넣었을 때 "말을 반복하시네요" 처럼 이전 맥락에 반응한다.
+    // 그래서 매 요청을 독립적으로 다루고, 지금 변환할 마지막 사용자 메시지 하나만 남긴다.
+    //
+    // 서버에서 잘라내는 이유: 구버전 exe(v0.1.0)는 히스토리를 통째로 보낸다. 프런트만
+    // 고치면 이미 배포된 exe 는 여전히 맥락을 쌓으므로, 최종 방어선은 여기여야 한다.
+    let current = match history.into_iter().rev().find(|m| m.role == "user") {
+        Some(m) => m,
+        None => return error_response(StatusCode::BAD_REQUEST, "보낼 내용이 없습니다."),
+    };
+
     // 4) 모드에 따라 업스트림이 갈린다.
     let upstream = if let Some(api_key) = &state.cfg.api_key {
         // ── 백엔드 모드 ──
-        // 메시지 배열: system 하나 + 검증된 히스토리. system 프롬프트는 키를 쥔 이 서버만
-        // 만든다. 클라이언트가 보낸 system 역할은 sanitize_history 가 이미 거부했다.
-        let mut messages = Vec::with_capacity(history.len() + 1);
-        messages.push(json!({ "role": "system", "content": system_prompt }));
-        for m in history {
-            messages.push(json!({ "role": m.role, "content": m.content }));
-        }
-
+        // system 하나 + 지금 변환할 사용자 메시지 하나. 딱 이 두 개다. system 프롬프트는
+        // 키를 쥔 이 서버만 만든다. 클라이언트가 보낸 system 역할은 sanitize_history 가
+        // 이미 거부했다.
         let body = json!({
             "model": state.cfg.model,
-            "messages": messages,
+            "messages": [
+                { "role": "system", "content": system_prompt },
+                { "role": "user", "content": current.content },
+            ],
             "stream": true,
             // 말투를 살리려면 약간의 자유도가 필요하다. 너무 낮으면 문체가 밋밋해진다.
             "temperature": 0.8,
@@ -112,16 +121,11 @@ pub async fn handle_chat(
             .send()
     } else {
         // ── 릴레이 모드 ──
-        // 검증된 히스토리와 말투를 그대로 백엔드의 /api/chat 에 넘긴다. system 프롬프트를
+        // 변환할 메시지 하나와 말투를 백엔드의 /api/chat 에 넘긴다. system 프롬프트를
         // 여기서 만들어 보내지 않는 이유: 백엔드는 클라이언트가 준 system 을 거부한다.
         // 말투 조립은 키를 쥔 쪽의 몫이다.
-        let messages: Vec<_> = history
-            .iter()
-            .map(|m| json!({ "role": m.role, "content": m.content }))
-            .collect();
-
         let body = json!({
-            "messages": messages,
+            "messages": [{ "role": "user", "content": current.content }],
             "tone": req.tone,
             "custom_tone": req.custom_tone,
         });

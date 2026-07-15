@@ -166,10 +166,12 @@
 
 <script>
 // ─────────────────────────────────────────────────────────────
-// 상태. 대화 히스토리는 이 브라우저 탭 안에만 존재한다.
-// 서버는 무상태(stateless)라 매 요청에 히스토리를 통째로 실어 보낸다.
+// 상태.
+// 이건 대화가 아니라 말투 변환이다. 매 요청은 서로 독립적이라 이전에 주고받은 내용을
+// 다음 요청에 싣지 않는다. 화면의 로그는 지난 변환 결과를 보여줄 뿐, 모델에는 지금
+// 입력한 문장 하나만 간다. (그래야 같은 문장을 말투만 바꿔 다시 넣어도 "말을 반복하시네요"
+// 같은 맥락 반응이 나오지 않는다.)
 // ─────────────────────────────────────────────────────────────
-const history = [];           // [{role: 'user'|'assistant', content: string}]
 let toneId = null;            // 선택된 말투 id
 let maxCustomChars = 200;     // 서버가 알려주는 직접입력 상한
 let busy = false;             // 응답을 받는 중이면 true (중복 전송 방지)
@@ -255,7 +257,6 @@ async function send() {
   $input.style.height = 'auto';
 
   addBubble('user', text);
-  history.push({ role: 'user', content: text });
 
   // 빈 말풍선을 먼저 띄우고, 토큰이 도착할 때마다 여기에 이어 붙인다.
   const $bot = addBubble('bot', '');
@@ -267,7 +268,8 @@ async function send() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        messages: history,
+        // 지금 입력한 문장 하나만 보낸다. 이전 턴은 싣지 않는다 — 각 변환은 독립적이다.
+        messages: [{ role: 'user', content: text }],
         tone: toneId,
         custom_tone: toneId === 'custom' ? $customTone.value : null,
       }),
@@ -317,17 +319,13 @@ async function send() {
       }
     }
 
-    if (answer) {
-      history.push({ role: 'assistant', content: answer });
-    } else {
+    if (!answer) {
       $bot.remove();
       addBubble('error', '빈 응답을 받았습니다.');
-      history.pop();   // 답을 못 받았으니 방금 넣은 user 메시지도 되돌린다
     }
   } catch (e) {
     $bot.remove();
     addBubble('error', e.message);
-    history.pop();     // 실패한 턴은 히스토리에 남기지 않는다
   } finally {
     $bot.classList.remove('pending');
     busy = false;
@@ -357,7 +355,6 @@ $input.addEventListener('input', () => {
 });
 
 $reset.onclick = () => {
-  history.length = 0;
   $log.innerHTML = '<div id="empty">말투를 고르고 아무 말이나 걸어보세요.</div>';
   $input.focus();
 };
